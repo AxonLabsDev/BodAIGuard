@@ -22,6 +22,26 @@ BodAIGuard fills that gap.
 
 ## Install
 
+### Binary (recommended)
+
+Download from [GitHub Releases](https://github.com/AxonLabsDev/BodAIGuard/releases):
+
+| Platform | Binary |
+|----------|--------|
+| Linux x64 | `bodaiguard-linux-x64` |
+| Windows x64 | `bodaiguard-win-x64.exe` |
+| macOS Intel | `bodaiguard-macos-x64` |
+| macOS Apple Silicon | `bodaiguard-macos-arm64` |
+
+```bash
+# Download binary + rules, then:
+chmod +x bodaiguard-linux-x64
+mkdir -p rules && mv default.yaml rules/
+./bodaiguard-linux-x64 test "ls -la"
+```
+
+### From source
+
 ```bash
 npm install
 npm run build
@@ -267,6 +287,26 @@ BodAIGuard comble ce vide.
 - **Fail-open** : ne plante jamais votre agent, les erreurs autorisent par defaut
 
 ## Installation
+
+### Binaire (recommande)
+
+Telecharger depuis [GitHub Releases](https://github.com/AxonLabsDev/BodAIGuard/releases) :
+
+| Plateforme | Binaire |
+|------------|---------|
+| Linux x64 | `bodaiguard-linux-x64` |
+| Windows x64 | `bodaiguard-win-x64.exe` |
+| macOS Intel | `bodaiguard-macos-x64` |
+| macOS Apple Silicon | `bodaiguard-macos-arm64` |
+
+```bash
+# Telecharger le binaire + les regles, puis :
+chmod +x bodaiguard-linux-x64
+mkdir -p rules && mv default.yaml rules/
+./bodaiguard-linux-x64 test "ls -la"
+```
+
+### Depuis les sources
 
 ```bash
 npm install
