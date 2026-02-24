@@ -1,0 +1,192 @@
+version: "1.0"
+name: "BodAIGuard Default Rules"
+description: "Universal guardrails for AI agents"
+
+actions:
+  filesystem:
+    block:
+      - pattern: "rm -rf /$"
+        reason: "Filesystem root destruction"
+      - pattern: "rm -rf /\\*"
+        reason: "Filesystem root destruction"
+      - pattern: "rm -rf ~$"
+        reason: "Home directory destruction"
+      - pattern: "rm -rf ~/\\*"
+        reason: "Home directory destruction"
+      - pattern: "mkfs\\."
+        reason: "Disk formatting"
+      - pattern: "dd if=/dev/zero"
+        reason: "Disk overwrite"
+      - pattern: "shred\\s"
+        reason: "Secure file destruction"
+    confirm:
+      - pattern: "rm -rf"
+        reason: "Recursive deletion"
+      - pattern: "rm -r "
+        reason: "Recursive deletion"
+      - pattern: "find .* -delete"
+        reason: "Mass file deletion"
+      - pattern: "find .* -exec rm"
+        reason: "Mass file deletion"
+
+  database:
+    block:
+      - pattern: "DROP DATABASE"
+        reason: "Database destruction"
+      - pattern: "DROP SCHEMA.*CASCADE"
+        reason: "Schema cascade destruction"
+    confirm:
+      - pattern: "DROP TABLE"
+        reason: "Table destruction"
+      - pattern: "DELETE FROM"
+        reason: "Data deletion"
+      - pattern: "TRUNCATE"
+        reason: "Table truncation"
+      - pattern: "ALTER TABLE.*DROP"
+        reason: "Column/constraint removal"
+
+  network:
+    block:
+      - pattern: "nft delete table"
+        reason: "Firewall table deletion"
+      - pattern: "nft flush ruleset"
+        reason: "Firewall rules flush"
+      - pattern: "iptables -F"
+        reason: "Firewall rules flush"
+    confirm:
+      - pattern: "iptables|nftables|nft "
+        reason: "Firewall modification"
+      - pattern: "ufw (allow|deny|delete|reset)"
+        reason: "UFW firewall modification"
+      - pattern: "systemctl (stop|disable|mask)"
+        reason: "Service shutdown"
+      - pattern: "service .* stop"
+        reason: "Service shutdown"
+
+  email:
+    block:
+      - pattern: "delete.*all.*(mail|message|inbox)"
+        reason: "Mass email deletion"
+      - pattern: "empty.*(trash|inbox|spam)"
+        reason: "Mailbox purge"
+      - pattern: "purge.*(mail|inbox|message)"
+        reason: "Mail purge"
+    confirm:
+      - pattern: "send.*(email|mail|message)"
+        reason: "Email sending"
+      - pattern: "forward.*(email|mail)"
+        reason: "Email forwarding"
+
+  git:
+    block:
+      - pattern: "git push.*--force.*(main|master)(\\s|$)"
+        reason: "Force push to main/master"
+      - pattern: "git push.*-f.*(main|master)(\\s|$)"
+        reason: "Force push to main/master"
+    confirm:
+      - pattern: "git push --force|git push -f"
+        reason: "Force push"
+      - pattern: "git reset --hard"
+        reason: "Hard reset (data loss)"
+      - pattern: "git clean -fd"
+        reason: "Remove untracked files"
+      - pattern: "git checkout \\."
+        reason: "Discard all changes"
+      - pattern: "git branch -D"
+        reason: "Force delete branch"
+
+  process:
+    block:
+      - pattern: ":\\(\\)\\{.*:\\|:&.*\\};:"
+        reason: "Fork bomb"
+      - pattern: "kill -9 1$"
+        reason: "Kill init process"
+    confirm:
+      - pattern: "kill -9"
+        reason: "Force kill process"
+      - pattern: "pkill|killall"
+        reason: "Mass process termination"
+
+  secrets:
+    block:
+      - pattern: "curl.*\\|.*sh$"
+        reason: "Remote code execution"
+      - pattern: "wget.*\\|.*sh$"
+        reason: "Remote code execution"
+    confirm:
+      - pattern: "curl.*-o|wget "
+        reason: "File download"
+
+  containers:
+    confirm:
+      - pattern: "docker rm -f"
+        reason: "Force remove container"
+      - pattern: "docker system prune"
+        reason: "Docker system cleanup"
+      - pattern: "docker volume rm"
+        reason: "Volume deletion"
+
+  prompt_injection:
+    block:
+      - pattern: "ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions?"
+        reason: "Instruction override attempt"
+      - pattern: "disregard\\s+(your\\s+)?(previous|prior|all)\\s+"
+        reason: "Instruction override attempt"
+      - pattern: "forget\\s+(everything|all|your\\s+instructions)"
+        reason: "Context reset attempt"
+      - pattern: "new\\s+instructions?\\s*:\\s*you\\s+(are|must|should|will)"
+        reason: "Instruction injection"
+      - pattern: "you\\s+are\\s+now\\s+(DAN|jailbreak|unrestricted|free|evil)"
+        reason: "Role hijacking (DAN/jailbreak)"
+      - pattern: "enter\\s+(developer|jailbreak|god|admin|unrestricted)\\s+mode"
+        reason: "Mode hijacking attempt"
+      - pattern: "act\\s+as\\s+(an?\\s+)?(unrestricted|evil|jailbroken|unfiltered)"
+        reason: "Unrestricted mode request"
+      - pattern: "pretend\\s+(you\\s+)?(have\\s+no\\s+|are\\s+without\\s+)(limits|restrictions|rules)"
+        reason: "Constraint bypass attempt"
+      - pattern: "repeat\\s+(your\\s+)?(system\\s+prompt|instructions?)\\s+verbatim"
+        reason: "Prompt extraction attempt"
+      - pattern: "(show|reveal|print|output)\\s+(me\\s+)?(your|the)\\s+(full\\s+|entire\\s+)?system\\s+prompt"
+        reason: "Prompt extraction attempt"
+      - pattern: "<\\|im_start\\|>|<\\|im_end\\|>"
+        reason: "ChatML delimiter injection"
+      - pattern: "\\[INST\\]|\\[/INST\\]"
+        reason: "Llama instruction delimiter injection"
+      - pattern: "<<SYS>>|<</SYS>>"
+        reason: "Llama SYS delimiter injection"
+      - pattern: "<\\|system\\|>|<\\|user\\|>|<\\|assistant\\|>"
+        reason: "Role delimiter injection"
+      - pattern: "exfiltrate|exfil\\s"
+        reason: "Data exfiltration keyword"
+    warn:
+      - pattern: "what\\s+(is|are|were)\\s+your\\s+(original\\s+)?(instructions?|rules|system\\s+prompt)"
+        reason: "Possible prompt extraction probe"
+      - pattern: "forward\\s+.{0,50}(email|data|content)\\s+to\\s+"
+        reason: "Potential data forwarding"
+      - pattern: "send\\s+.{0,50}\\s+to\\s+(webhook|https?://)"
+        reason: "Potential data exfiltration"
+      - pattern: "eval\\(|Function\\("
+        reason: "Code execution in content"
+      - pattern: "base64.*decode|atob\\("
+        reason: "Possible encoded payload"
+
+paths:
+  block:
+    - "~/.ssh/id_*"
+    - "~/.ssh/*.pem"
+    - "~/.aws/credentials"
+    - "~/.gnupg/private*"
+    - "**/credentials.json"
+    - "**/.secrets"
+  confirm:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/docker-compose*.yml"
+    - "**/Dockerfile"
+    - "**/.github/workflows/*"
+    - "**/package.json"
+  readonly:
+    - "/etc/**"
+    - "/usr/lib/**"
+    - "/boot/**"
+    - "/sys/**"
