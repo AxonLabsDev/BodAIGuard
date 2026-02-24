@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icone-240x240.png" alt="BodAIGuard" width="120" />
+</p>
+
 # BodAIGuard
 
 Universal AI agent guardrail. The bodyguard for AI agents.
@@ -263,6 +267,10 @@ ALD Proprietary License v1.0 - See [LICENSE](LICENSE) file.
 Copyright (c) 2026 Axon Labs Dev.
 
 ---
+
+<p align="center">
+  <img src="icone-240x240.png" alt="BodAIGuard" width="120" />
+</p>
 
 # BodAIGuard (Francais)
 
