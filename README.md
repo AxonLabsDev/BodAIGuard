@@ -6,7 +6,7 @@
 
 Universal AI agent guardrail. The bodyguard for AI agents.
 
-Prevents AI agents (Claude Code, Codex, Gemini, or any LLM agent) from executing dangerous actions without validation. YAML-driven rules, 4 enforcement modes, prompt injection detection.
+Prevents AI agents (Claude Code, Codex, Gemini, or any LLM agent) from executing dangerous actions without validation. YAML-driven rules, 5 enforcement modes, connection-aware validation priority, prompt injection detection.
 
 ## Why
 
@@ -18,9 +18,12 @@ BodAIGuard fills that gap.
 
 ## Features
 
-- **49 block rules, 44 confirm rules** across 12 categories
-- **4 enforcement modes**: hooks, HTTP proxy, system prompt injection, REST API
+- **45 block rules, 45 confirm rules** across 12 categories (including path rules)
+- **5 enforcement modes**: hooks, HTTP proxy, MCP stdio proxy, system prompt injection, REST API
 - **Anti-prompt injection**: 3-tier detection (regex, heuristics, structural analysis)
+- **AI connection detection**: channel/origin detection for `api`, `proxy`, `mcp`, `hook`, `shell`, `cli`, `ttyd-tmux`
+- **User validation priority**: `confirm` responses are flagged with `user_validation_required` in AI flows
+- **Shell guard**: optional bash/tmux/ttyd protection script for direct shell usage
 - **YAML-driven**: add your own rules without touching code (merged on top of defaults)
 - **Fail-closed**: errors block by default, never lets dangerous actions through silently
 - **SSRF protection**: rejects absolute URLs in proxy requests
@@ -52,6 +55,11 @@ mkdir -p rules && mv default.yaml rules/
 npm install
 npm run build
 npm link  # makes 'bodaiguard' available globally
+
+# Bun workflow (equivalent)
+bun install
+bun run build
+bun link
 ```
 
 ## Quick Start
@@ -100,10 +108,26 @@ The proxy:
 - Evaluates commands and **all** paths against rules (multi-path)
 - Scans `tool_result` content for prompt injection
 - Strips blocked tool calls, replaces with explanation
+- Applies connection-aware validation priority in AI flows
 - Auto-generates 128-bit auth token if `--auth-token` not provided
 - Forces `stream: false` to ensure complete tool call inspection
 
-### 3. System Prompt Injection
+### 3. MCP Stdio Proxy
+
+Wraps an MCP server process and intercepts `tools/call` JSON-RPC requests before they reach the server.
+
+```bash
+bodaiguard mcp-proxy <mcp-server-command> [args...]
+bodaiguard mcp-proxy npx -y @modelcontextprotocol/server-filesystem /tmp
+```
+
+MCP proxy behavior:
+- Evaluates tool arguments (commands + paths) with the same rules engine
+- Blocks `block` decisions immediately
+- Treats `confirm` as blocked in non-interactive MCP flows
+- Logs channel/origin/signal context in audit entries
+
+### 4. System Prompt Injection
 
 Generates guardrail text to inject into any AI agent's system prompt.
 
@@ -114,7 +138,7 @@ bodaiguard prompt generate --format raw      # Plain text
 bodaiguard prompt generate --format claude --include filesystem,git
 ```
 
-### 4. REST API
+### 5. REST API
 
 Standalone API server exposing BodAIGuard as a service.
 
@@ -138,6 +162,20 @@ curl -X POST http://127.0.0.1:3100/evaluate \
   -H 'Content-Type: application/json' \
   -d '{"command":"rm -rf /"}'
 ```
+
+`POST /evaluate` responses include `connection` metadata and `user_validation_required` when applicable.
+
+### Optional: Bash Shell Guard (tmux/ttyd/SSH)
+
+For direct shell usage outside Claude hooks, source the guard script:
+
+```bash
+source ./src/shell/guard.sh
+# deployed install example:
+# source /usr/local/share/bodaiguard/shell-guard.sh
+```
+
+The shell guard detects AI-like sessions and can promote WARN to CONFIRM in AI sessions.
 
 ## Anti-Prompt Injection
 
@@ -173,7 +211,9 @@ Rules are defined in YAML. Default rules cover 12 categories:
 | permissions | 2 | 3 | chmod 777, sudo, chown |
 | containers | 0 | 3 | docker prune, volume rm |
 | deployment | 0 | 3 | deploy, gh release, gh pr merge |
-| prompt_injection | 15 | 5 | DAN mode, ChatML delimiters |
+| prompt_injection | 15 | 0 | DAN mode, ChatML delimiters |
+
+Totals reported by `bodaiguard status` include action + path rules: **45 block / 45 confirm**.
 
 ### Custom Rules
 
@@ -217,18 +257,25 @@ bodaiguard test <input>              Test command or path against rules
 
 bodaiguard scan [text]               Scan content for prompt injection
   -f, --file <path>                  Scan a file
+  -r, --rules <path>                 Custom rules file
   -s, --source <src>                 Source label
   --json                             JSON output
 
 bodaiguard prompt generate           Generate system prompt guardrails
   -f, --format <fmt>                 claude|openai|raw
+  -r, --rules <path>                 Custom rules file
+  -o, --output <file>                Write output to file
   --include <cats>                   Include categories (comma-separated)
   --exclude <cats>                   Exclude categories
 
 bodaiguard proxy start               Start guardrail proxy
   -p, --port <number>               Port (default: 4000, auto-detect free)
   -t, --target <url>                Target API URL
+  -r, --rules <path>                Custom rules file
   --confirm-mode <mode>             block|webhook
+  --confirm-webhook <url>           Webhook URL for approvals
+  --confirm-timeout <ms>            Approval timeout in ms
+  --confirm-secret <secret>         HMAC secret for webhook auth
   --auth-token <token>              Bearer token
   -v, --verbose                     Log all tool calls
 
@@ -243,29 +290,14 @@ bodaiguard rules list                List all active rules
 bodaiguard audit                     Show recent audit log
 bodaiguard install hooks             Install Claude Code hooks
 bodaiguard uninstall hooks           Remove Claude Code hooks
+bodaiguard mcp-proxy <cmd> [args...] Start MCP stdio proxy
 ```
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────┐
-│              RULES ENGINE               │
-│         (YAML pattern matching)         │
-│   49 block │ 44 confirm │ 12 categories │
-└──────┬──────────┬──────────┬────────────┘
-       │          │          │
- ┌─────▼───┐ ┌───▼────┐ ┌──▼───────┐ ┌───▼────┐
- │  HOOKS  │ │ PROXY  │ │  PROMPT  │ │  API   │
- │ Claude  │ │  HTTP  │ │ INJECT   │ │  REST  │
- │  Code   │ │Any API │ │  Any AI  │ │Service │
- └─────────┘ └────────┘ └──────────┘ └────────┘
-       │          │          │            │
- ┌─────▼──────────▼──────────▼────────────▼─────┐
- │          INJECTION DETECTOR                   │
- │  Tier 1: Regex │ Tier 2: Heuristic           │
- │       Tier 3: Structural                     │
- └───────────────────────────────────────────────┘
-```
+- Rules engine (YAML pattern matching): 45 block + 45 confirm rules across 12 categories
+- Entry points: Claude hooks, HTTP proxy, MCP stdio proxy, system prompt generator, REST API, optional shell guard
+- Shared security layers: compound command parsing, multi-path path checks, 3-tier injection detector, connection detection, audit logging
 
 ## Security Model
 
@@ -279,6 +311,9 @@ Key security features:
 - **Multi-path evaluation**: all path arguments in tool calls are evaluated, not just the first
 - **Compound command analysis**: `&&`, `||`, `;`, `|`, `$()` and backtick substitutions are split and each evaluated
 - **Streaming disabled**: proxy forces `stream: false` to ensure all tool calls are inspected
+- **Connection-aware decisions**: AI channels (`api/proxy/mcp/hook/shell/cli/ttyd-tmux`) are detected and annotated
+- **User validation priority**: AI connection `confirm` outcomes are explicitly flagged for user validation
+- **MCP non-interactive safety**: `confirm` in MCP proxy context is denied by default
 - **Rate limiting**: 100 requests/min per IP on proxy and API
 - **Timing-safe auth**: token comparison uses `crypto.timingSafeEqual`
 - **30s request timeout**: prevents hanging connections to target APIs
@@ -302,7 +337,7 @@ Copyright (c) 2026 Axon Labs Dev.
 
 Garde-fou universel pour agents IA. Le garde du corps des agents IA.
 
-Empeche les agents IA (Claude Code, Codex, Gemini, ou tout agent LLM) d'executer des actions dangereuses sans validation. Regles pilotees par YAML, 4 modes d'application, detection d'injection de prompt.
+Empeche les agents IA (Claude Code, Codex, Gemini, ou tout agent LLM) d'executer des actions dangereuses sans validation. Regles pilotees par YAML, 5 modes d'application, priorite de validation utilisateur selon la connexion, detection d'injection de prompt.
 
 ## Pourquoi
 
@@ -314,9 +349,12 @@ BodAIGuard comble ce vide.
 
 ## Fonctionnalites
 
-- **49 regles de blocage, 44 regles de confirmation** dans 12 categories
-- **4 modes d'application** : hooks, proxy HTTP, injection de system prompt, API REST
+- **45 regles de blocage, 45 regles de confirmation** dans 12 categories (incluant les regles de chemins)
+- **5 modes d'application** : hooks, proxy HTTP, proxy MCP stdio, injection de system prompt, API REST
 - **Anti-injection de prompt** : detection a 3 niveaux (regex, heuristiques, analyse structurelle)
+- **Detection de connexion IA** : detection canal/origine pour `api`, `proxy`, `mcp`, `hook`, `shell`, `cli`, `ttyd-tmux`
+- **Priorite validation utilisateur** : les reponses `confirm` sont marquees `user_validation_required` en flux IA
+- **Shell guard** : script bash/tmux/ttyd optionnel pour usage shell direct
 - **Pilote par YAML** : ajoutez vos propres regles sans toucher au code (fusionnees avec les defauts)
 - **Fail-closed** : les erreurs bloquent par defaut, aucune action dangereuse ne passe silencieusement
 - **Protection SSRF** : rejette les URLs absolues dans les requetes proxy
@@ -348,6 +386,11 @@ mkdir -p rules && mv default.yaml rules/
 npm install
 npm run build
 npm link  # rend 'bodaiguard' disponible globalement
+
+# Workflow Bun (equivalent)
+bun install
+bun run build
+bun link
 ```
 
 ## Demarrage rapide
@@ -396,10 +439,26 @@ Le proxy :
 - Evalue les commandes et **tous** les chemins contre les regles (multi-path)
 - Scanne le contenu `tool_result` pour injection de prompt
 - Supprime les appels bloques et les remplace par une explication
+- Applique une priorite de validation selon le type de connexion IA
 - Genere un token auth 128-bit automatiquement si `--auth-token` non fourni
 - Force `stream: false` pour garantir l'inspection complete des tool calls
 
-### 3. Injection de System Prompt
+### 3. Proxy MCP Stdio
+
+Encapsule un serveur MCP et intercepte les requetes JSON-RPC `tools/call` avant execution.
+
+```bash
+bodaiguard mcp-proxy <commande-serveur-mcp> [args...]
+bodaiguard mcp-proxy npx -y @modelcontextprotocol/server-filesystem /tmp
+```
+
+Comportement du proxy MCP :
+- Evalue les arguments d'outils (commandes + chemins) avec le meme moteur de regles
+- Bloque immediatement les decisions `block`
+- Traite `confirm` comme bloque dans les flux MCP non interactifs
+- Journalise le contexte canal/origine/signaux dans l'audit
+
+### 4. Injection de System Prompt
 
 Genere du texte de garde-fou a injecter dans le system prompt de n'importe quel agent IA.
 
@@ -410,7 +469,7 @@ bodaiguard prompt generate --format raw      # texte brut
 bodaiguard prompt generate --format claude --include filesystem,git
 ```
 
-### 4. API REST
+### 5. API REST
 
 Serveur API autonome exposant BodAIGuard comme service.
 
@@ -434,6 +493,20 @@ curl -X POST http://127.0.0.1:3100/evaluate \
   -H 'Content-Type: application/json' \
   -d '{"command":"rm -rf /"}'
 ```
+
+Les reponses `POST /evaluate` incluent `connection` et `user_validation_required` quand applicable.
+
+### Optionnel : Shell Guard Bash (tmux/ttyd/SSH)
+
+Pour un usage shell direct hors hooks Claude, sourcez le script :
+
+```bash
+source ./src/shell/guard.sh
+# exemple apres deploiement :
+# source /usr/local/share/bodaiguard/shell-guard.sh
+```
+
+Le shell guard detecte les sessions de type IA et peut promouvoir WARN vers CONFIRM en session IA.
 
 ## Anti-Injection de Prompt
 
@@ -469,7 +542,9 @@ Les regles sont definies en YAML. Les regles par defaut couvrent 12 categories :
 | permissions | 2 | 3 | chmod 777, sudo, chown |
 | containers | 0 | 3 | docker prune, volume rm |
 | deployment | 0 | 3 | deploy, gh release, gh pr merge |
-| prompt_injection | 15 | 5 | mode DAN, delimiteurs ChatML |
+| prompt_injection | 15 | 0 | mode DAN, delimiteurs ChatML |
+
+Les totaux affiches par `bodaiguard status` incluent actions + chemins : **45 block / 45 confirm**.
 
 ### Regles personnalisees
 
@@ -513,18 +588,25 @@ bodaiguard test <input>              Tester commande ou chemin
 
 bodaiguard scan [text]               Scanner du contenu
   -f, --file <path>                  Scanner un fichier
+  -r, --rules <path>                 Fichier de regles personnalise
   -s, --source <src>                 Label source
   --json                             Sortie JSON
 
 bodaiguard prompt generate           Generer garde-fous pour system prompt
   -f, --format <fmt>                 claude|openai|raw
+  -r, --rules <path>                 Fichier de regles personnalise
+  -o, --output <file>                Ecrire la sortie dans un fichier
   --include <cats>                   Categories a inclure (virgule)
   --exclude <cats>                   Categories a exclure
 
 bodaiguard proxy start               Demarrer le proxy
   -p, --port <number>               Port (defaut: 4000, detection auto)
   -t, --target <url>                URL API cible
+  -r, --rules <path>                Fichier de regles personnalise
   --confirm-mode <mode>             block|webhook
+  --confirm-webhook <url>           URL webhook pour approbations
+  --confirm-timeout <ms>            Timeout approbation en ms
+  --confirm-secret <secret>         Secret HMAC pour webhook
   --auth-token <token>              Token Bearer
   -v, --verbose                     Logger tous les appels
 
@@ -539,6 +621,7 @@ bodaiguard rules list                Lister toutes les regles actives
 bodaiguard audit                     Afficher le journal d'audit recent
 bodaiguard install hooks             Installer les hooks Claude Code
 bodaiguard uninstall hooks           Supprimer les hooks Claude Code
+bodaiguard mcp-proxy <cmd> [args...] Demarrer un proxy MCP stdio
 ```
 
 ## Modele de securite
@@ -553,6 +636,9 @@ Fonctionnalites de securite cles :
 - **Evaluation multi-path** : tous les arguments de chemin dans les tool calls sont evalues, pas seulement le premier
 - **Analyse de commandes composees** : `&&`, `||`, `;`, `|`, `$()` et backticks sont decoupes et chacun evalue
 - **Streaming desactive** : le proxy force `stream: false` pour garantir l'inspection de tous les tool calls
+- **Decision selon la connexion** : les canaux IA (`api/proxy/mcp/hook/shell/cli/ttyd-tmux`) sont detectes et traces
+- **Priorite validation utilisateur** : les issues `confirm` en contexte IA sont marquees pour validation explicite
+- **Securite MCP non interactive** : `confirm` est refuse par defaut en proxy MCP
 - **Rate limiting** : 100 requetes/min par IP sur proxy et API
 - **Auth timing-safe** : la comparaison de token utilise `crypto.timingSafeEqual`
 - **Timeout 30s** : empeche les connexions bloquantes vers les APIs cibles
