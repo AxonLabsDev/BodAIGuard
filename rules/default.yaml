@@ -86,6 +86,8 @@ actions:
     confirm:
       - pattern: "git push --force|git push -f"
         reason: "Force push"
+      - pattern: "git push"
+        reason: "Push to remote (mandatory stop)"
       - pattern: "git reset --hard"
         reason: "Hard reset (data loss)"
       - pattern: "git clean -fd"
@@ -94,6 +96,10 @@ actions:
         reason: "Discard all changes"
       - pattern: "git branch -D"
         reason: "Force delete branch"
+      - pattern: "git rebase"
+        reason: "Rebase (history rewrite)"
+      - pattern: "git stash drop"
+        reason: "Drop stash (data loss)"
 
   process:
     block:
@@ -117,6 +123,36 @@ actions:
       - pattern: "curl.*-o|wget "
         reason: "File download"
 
+  packages:
+    block:
+      - pattern: "npm publish"
+        reason: "Package publication (mandatory block)"
+    confirm:
+      - pattern: "npm install(?! --save-dev)"
+        reason: "Install production dependency (mandatory stop)"
+      - pattern: "npm uninstall|npm remove"
+        reason: "Remove dependency"
+      - pattern: "pip install"
+        reason: "Install Python package (mandatory stop)"
+      - pattern: "apt(-get)?\\s+(install|remove|purge)"
+        reason: "System package modification"
+      - pattern: "brew (install|uninstall|remove)"
+        reason: "Homebrew package modification"
+
+  permissions:
+    block:
+      - pattern: "chmod 777"
+        reason: "World-writable permissions"
+      - pattern: "chmod -R 777"
+        reason: "Recursive world-writable permissions"
+    confirm:
+      - pattern: "chmod"
+        reason: "Permission change (mandatory stop)"
+      - pattern: "chown"
+        reason: "Ownership change (mandatory stop)"
+      - pattern: "sudo "
+        reason: "Elevated privileges (mandatory stop)"
+
   containers:
     confirm:
       - pattern: "docker rm -f"
@@ -125,6 +161,15 @@ actions:
         reason: "Docker system cleanup"
       - pattern: "docker volume rm"
         reason: "Volume deletion"
+
+  deployment:
+    confirm:
+      - pattern: "deploy|release|publish"
+        reason: "Deployment action (mandatory stop)"
+      - pattern: "gh release create"
+        reason: "GitHub release creation (mandatory stop)"
+      - pattern: "gh pr merge"
+        reason: "Pull request merge (mandatory stop)"
 
   prompt_injection:
     block:

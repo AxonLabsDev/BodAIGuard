@@ -18,11 +18,13 @@ BodAIGuard fills that gap.
 
 ## Features
 
-- **42 block rules, 31 confirm rules** across 9 categories
+- **49 block rules, 44 confirm rules** across 12 categories
 - **4 enforcement modes**: hooks, HTTP proxy, system prompt injection, REST API
 - **Anti-prompt injection**: 3-tier detection (regex, heuristics, structural analysis)
-- **YAML-driven**: add your own rules without touching code
-- **Fail-open**: never crashes your agent, errors default to allow
+- **YAML-driven**: add your own rules without touching code (merged on top of defaults)
+- **Fail-closed**: errors block by default, never lets dangerous actions through silently
+- **SSRF protection**: rejects absolute URLs in proxy requests
+- **Compound command analysis**: splits `&&`, `||`, `;`, `|`, `$()`, backticks
 
 ## Install
 
@@ -95,9 +97,11 @@ bodaiguard proxy start --port 4000 --target https://api.anthropic.com
 
 The proxy:
 - Inspects `tool_use` / `function_call` in API responses
-- Evaluates commands and paths against rules
+- Evaluates commands and **all** paths against rules (multi-path)
 - Scans `tool_result` content for prompt injection
 - Strips blocked tool calls, replaces with explanation
+- Auto-generates 128-bit auth token if `--auth-token` not provided
+- Forces `stream: false` to ensure complete tool call inspection
 
 ### 3. System Prompt Injection
 
@@ -154,7 +158,7 @@ bodaiguard scan "safe content" --json                           # JSON output
 
 ## Rules
 
-Rules are defined in YAML. Default rules cover 9 categories:
+Rules are defined in YAML. Default rules cover 12 categories:
 
 | Category | Block | Confirm | Examples |
 |----------|-------|---------|----------|
@@ -162,15 +166,18 @@ Rules are defined in YAML. Default rules cover 9 categories:
 | database | 2 | 4 | DROP DATABASE, DELETE FROM |
 | network | 3 | 4 | nft flush, iptables -F |
 | email | 3 | 2 | delete all mail, send email |
-| git | 2 | 5 | force push main, reset --hard |
+| git | 2 | 8 | force push main, reset --hard, git push |
 | process | 2 | 2 | fork bomb, kill -9 |
 | secrets | 2 | 1 | curl \| sh, wget \| sh |
+| packages | 1 | 5 | npm publish, pip install, apt install |
+| permissions | 2 | 3 | chmod 777, sudo, chown |
 | containers | 0 | 3 | docker prune, volume rm |
+| deployment | 0 | 3 | deploy, gh release, gh pr merge |
 | prompt_injection | 15 | 5 | DAN mode, ChatML delimiters |
 
 ### Custom Rules
 
-Create `~/.bodaiguard/rules.yaml` to add your own rules (merged with defaults):
+Create `~/.bodaiguard/rules.yaml` to add your own rules. Custom rules are always **merged on top** of defaults (defaults are never replaced, ensuring base protections are always active):
 
 ```yaml
 version: "1.0"
@@ -244,7 +251,7 @@ bodaiguard uninstall hooks           Remove Claude Code hooks
 ┌─────────────────────────────────────────┐
 │              RULES ENGINE               │
 │         (YAML pattern matching)         │
-│   42 block │ 31 confirm │ 9 categories  │
+│   49 block │ 44 confirm │ 12 categories │
 └──────┬──────────┬──────────┬────────────┘
        │          │          │
  ┌─────▼───┐ ┌───▼────┐ ┌──▼───────┐ ┌───▼────┐
@@ -259,6 +266,25 @@ bodaiguard uninstall hooks           Remove Claude Code hooks
  │       Tier 3: Structural                     │
  └───────────────────────────────────────────────┘
 ```
+
+## Security Model
+
+BodAIGuard uses a **fail-closed** approach: any internal error (rule engine, injection scan, hook parse) results in a **block**, not an allow. This prevents malicious inputs from bypassing inspection by triggering errors.
+
+Key security features:
+- **Auto-generated auth token**: proxy and API auto-generate a 128-bit token at startup if none provided
+- **SSRF protection**: rejects absolute URLs (case-insensitive) on all HTTP methods
+- **Credential isolation**: proxy auth token is never forwarded to target API; `proxy-authorization` header stripped
+- **Symlink resolution**: paths are resolved via `realpathSync` before matching rules
+- **Multi-path evaluation**: all path arguments in tool calls are evaluated, not just the first
+- **Compound command analysis**: `&&`, `||`, `;`, `|`, `$()` and backtick substitutions are split and each evaluated
+- **Streaming disabled**: proxy forces `stream: false` to ensure all tool calls are inspected
+- **Rate limiting**: 100 requests/min per IP on proxy and API
+- **Timing-safe auth**: token comparison uses `crypto.timingSafeEqual`
+- **30s request timeout**: prevents hanging connections to target APIs
+- **Security headers**: `X-Content-Type-Options`, `X-Frame-Options`, `Cache-Control: no-store`
+- **Localhost-only binding**: proxy and API bind to `127.0.0.1`
+- **Rules always enforced**: custom rules merge on top of defaults, never replace them
 
 ## License
 
@@ -288,11 +314,13 @@ BodAIGuard comble ce vide.
 
 ## Fonctionnalites
 
-- **42 regles de blocage, 31 regles de confirmation** dans 9 categories
+- **49 regles de blocage, 44 regles de confirmation** dans 12 categories
 - **4 modes d'application** : hooks, proxy HTTP, injection de system prompt, API REST
 - **Anti-injection de prompt** : detection a 3 niveaux (regex, heuristiques, analyse structurelle)
-- **Pilote par YAML** : ajoutez vos propres regles sans toucher au code
-- **Fail-open** : ne plante jamais votre agent, les erreurs autorisent par defaut
+- **Pilote par YAML** : ajoutez vos propres regles sans toucher au code (fusionnees avec les defauts)
+- **Fail-closed** : les erreurs bloquent par defaut, aucune action dangereuse ne passe silencieusement
+- **Protection SSRF** : rejette les URLs absolues dans les requetes proxy
+- **Analyse de commandes composees** : decoupe `&&`, `||`, `;`, `|`, `$()`, backticks
 
 ## Installation
 
@@ -365,9 +393,11 @@ bodaiguard proxy start --port 4000 --target https://api.anthropic.com
 
 Le proxy :
 - Inspecte les `tool_use` / `function_call` dans les reponses API
-- Evalue les commandes et chemins contre les regles
+- Evalue les commandes et **tous** les chemins contre les regles (multi-path)
 - Scanne le contenu `tool_result` pour injection de prompt
 - Supprime les appels bloques et les remplace par une explication
+- Genere un token auth 128-bit automatiquement si `--auth-token` non fourni
+- Force `stream: false` pour garantir l'inspection complete des tool calls
 
 ### 3. Injection de System Prompt
 
@@ -424,7 +454,7 @@ bodaiguard scan "contenu safe" --json                           # sortie JSON
 
 ## Regles
 
-Les regles sont definies en YAML. Les regles par defaut couvrent 9 categories :
+Les regles sont definies en YAML. Les regles par defaut couvrent 12 categories :
 
 | Categorie | Blocage | Confirmation | Exemples |
 |-----------|---------|--------------|----------|
@@ -432,15 +462,18 @@ Les regles sont definies en YAML. Les regles par defaut couvrent 9 categories :
 | database | 2 | 4 | DROP DATABASE, DELETE FROM |
 | network | 3 | 4 | nft flush, iptables -F |
 | email | 3 | 2 | supprimer tous les mails, envoyer email |
-| git | 2 | 5 | force push main, reset --hard |
+| git | 2 | 8 | force push main, reset --hard, git push |
 | process | 2 | 2 | fork bomb, kill -9 |
 | secrets | 2 | 1 | curl \| sh, wget \| sh |
+| packages | 1 | 5 | npm publish, pip install, apt install |
+| permissions | 2 | 3 | chmod 777, sudo, chown |
 | containers | 0 | 3 | docker prune, volume rm |
+| deployment | 0 | 3 | deploy, gh release, gh pr merge |
 | prompt_injection | 15 | 5 | mode DAN, delimiteurs ChatML |
 
 ### Regles personnalisees
 
-Creez `~/.bodaiguard/rules.yaml` pour ajouter vos propres regles (fusionnees avec les regles par defaut) :
+Creez `~/.bodaiguard/rules.yaml` pour ajouter vos propres regles. Les regles personnalisees sont toujours **fusionnees par-dessus** les defauts (les defauts ne sont jamais remplaces, assurant que les protections de base restent actives) :
 
 ```yaml
 version: "1.0"
@@ -507,6 +540,25 @@ bodaiguard audit                     Afficher le journal d'audit recent
 bodaiguard install hooks             Installer les hooks Claude Code
 bodaiguard uninstall hooks           Supprimer les hooks Claude Code
 ```
+
+## Modele de securite
+
+BodAIGuard utilise une approche **fail-closed** : toute erreur interne (moteur de regles, scan injection, parsing hook) resulte en un **blocage**, jamais un allow. Cela empeche les inputs malveillants de contourner l'inspection en provoquant des erreurs.
+
+Fonctionnalites de securite cles :
+- **Token auth auto-genere** : le proxy et l'API generent un token 128-bit au demarrage si aucun n'est fourni
+- **Protection SSRF** : rejette les URLs absolues (insensible a la casse) sur toutes les methodes HTTP
+- **Isolation des credentials** : le token auth proxy n'est jamais transmis a l'API cible ; le header `proxy-authorization` est supprime
+- **Resolution des symlinks** : les chemins sont resolus via `realpathSync` avant le matching des regles
+- **Evaluation multi-path** : tous les arguments de chemin dans les tool calls sont evalues, pas seulement le premier
+- **Analyse de commandes composees** : `&&`, `||`, `;`, `|`, `$()` et backticks sont decoupes et chacun evalue
+- **Streaming desactive** : le proxy force `stream: false` pour garantir l'inspection de tous les tool calls
+- **Rate limiting** : 100 requetes/min par IP sur proxy et API
+- **Auth timing-safe** : la comparaison de token utilise `crypto.timingSafeEqual`
+- **Timeout 30s** : empeche les connexions bloquantes vers les APIs cibles
+- **Headers de securite** : `X-Content-Type-Options`, `X-Frame-Options`, `Cache-Control: no-store`
+- **Binding localhost** : le proxy et l'API se lient a `127.0.0.1`
+- **Regles toujours appliquees** : les regles personnalisees fusionnent par-dessus les defauts, ne les remplacent jamais
 
 ## Licence
 
